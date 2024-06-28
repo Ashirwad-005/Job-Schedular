@@ -1,0 +1,121 @@
+package Schedular;
+
+import java.util.*;
+import java.util.concurrent.*;
+
+public class JobScheduler {
+    private List<Job> jobs;
+    private Map<String, Future<?>> jobFutures;
+    private Map<String, Semaphore> resourceLocks;
+    private ExecutorService executor;
+
+    public JobScheduler(List<Job> jobs) {
+        this.jobs = jobs;
+        this.jobFutures = new HashMap<>();
+        this.resourceLocks = new HashMap<>();
+        this.executor = Executors.newCachedThreadPool();
+        for (Job job : jobs) {
+            for (String resource : job.getRequiredResources()) {
+                resourceLocks.putIfAbsent(resource, new Semaphore(1));
+            }
+        }
+    }
+
+    public void job_scheduler() {
+        PriorityQueue<Job> jobQueue = new PriorityQueue<>(jobs.size(),
+                (j1, j2) -> Integer.compare(j2.getImportance(), j1.getImportance()));
+        jobQueue.addAll(jobs);
+        long currentTime = System.currentTimeMillis() / 1000;
+        while (!jobQueue.isEmpty()) {
+            Job job = jobQueue.poll();
+            boolean dependenciesMet = true;
+            for (String dependency : job.getDependencies()) {
+                if (jobFutures.containsKey(dependency)) {
+                    Future<?> depFuture = jobFutures.get(dependency);
+                    if (!depFuture.isDone()) {
+                        dependenciesMet = false;
+                        break;
+                    }
+                }
+            }
+            if (!dependenciesMet) {
+                jobQueue.offer(job); 
+                continue;
+            }
+            List<Semaphore> locks = new ArrayList<>();
+            for (String resource : job.getRequiredResources()) {
+                locks.add(resourceLocks.get(resource));
+            }
+            try {
+                acquireResources(locks); 
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+                continue;
+            }
+            Future<?> future = executor.submit(() -> {
+                job.execute(); 
+                releaseResources(locks);
+            });
+            long endTime = System.currentTimeMillis() / 1000;
+            job.setStartTime(endTime - currentTime);
+            jobFutures.put(job.getName(), future); 
+            currentTime = System.currentTimeMillis() / 1000;
+        }
+        executor.shutdown(); 
+    }
+    void acquireResources(List<Semaphore> locks) throws InterruptedException {
+        for (Semaphore lock : locks) {
+            lock.acquire(); 
+        }
+    }
+     void releaseResources(List<Semaphore> locks) {
+        for (Semaphore lock : locks) {
+            lock.release(); 
+        }
+    }
+    public static void main(String[] args) {
+        List<Job> jobs = new ArrayList<>();
+        Scanner scan = new Scanner(System.in);
+        
+        System.out.println("Enter the number of jobs to be scheduled:");
+        int numJobs = scan.nextInt();
+        
+        while (numJobs > 0) {
+            String name;
+            int executionTime;
+            List<String> requiredResources = new ArrayList<>();
+            List<String> dependencies = new ArrayList<>();
+            int importance;
+
+            System.out.println("Enter the job details:");
+            System.out.print("Enter the job name: ");
+            name = scan.next();
+            System.out.print("Enter the execution time: ");
+            executionTime = scan.nextInt();
+            System.out.print("Enter the number of required resources: ");
+            int numResources = scan.nextInt();
+            System.out.println("Enter the required resources:");
+            for (int i = 0; i < numResources; i++) {
+            	String rs=scan.next();
+                requiredResources.add(rs);
+            }
+            System.out.print("Enter the number of dependencies:");
+            int numDependencies = scan.nextInt();
+            if (numDependencies > 0) {
+                System.out.println("Enter the dependencies:");
+                for (int i = 0; i < numDependencies; i++) {
+                	String dep=scan.next();
+                    dependencies.add(dep);
+                }
+            }
+            System.out.print("Enter the importance of the job: ");
+            importance = scan.nextInt();
+
+            jobs.add(new Job(name, executionTime, requiredResources, dependencies, importance));
+            numJobs--;
+        }
+
+        JobScheduler scheduler = new JobScheduler(jobs);
+        scheduler.job_scheduler();
+    }
+}
